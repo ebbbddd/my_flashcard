@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>英语学习卡片</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section id="home-view" class="view is-active" aria-labelledby="home-title">
+        <div class="topbar">
+          <div>
+            <p class="eyebrow">Feishu Reader</p>
+            <h1 id="home-title">英语学习卡片</h1>
+          </div>
+          <button id="add-document-button" class="control-button primary" type="button">添加飞书文档</button>
+        </div>
+        <div id="document-list" class="document-list"></div>
+      </section>
+
+      <section id="study-view" class="view" aria-labelledby="study-title">
+        <div class="study-header">
+          <button id="back-button" class="icon-button" type="button" aria-label="返回文档列表" title="返回文档列表">
+            <span aria-hidden="true">←</span>
+          </button>
+          <div class="study-heading">
+            <p id="study-section" class="eyebrow"></p>
+            <h1 id="study-title"></h1>
+          </div>
+          <div class="study-actions">
+            <button id="refresh-button" class="refresh-button" type="button" title="刷新飞书文档">刷新</button>
+            <div class="card-jump">
+              <button
+                id="progress-button"
+                class="progress-pill"
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded="false"
+              ></button>
+              <div id="card-jump-menu" class="card-jump-menu" role="listbox" aria-label="选择卡片序号"></div>
+            </div>
+          </div>
+        </div>
+
+        <button id="card-button" class="flashcard" type="button" aria-live="polite">
+          <span class="card-face card-front">
+            <span class="card-label">中文</span>
+            <span id="card-front-text" class="card-text"></span>
+          </span>
+          <span class="card-face card-back">
+            <span class="card-label">English</span>
+            <span id="card-back-text" class="card-text"></span>
+          </span>
+        </button>
+
+        <div class="study-controls">
+          <button id="prev-button" class="control-button" type="button">
+            <span aria-hidden="true">←</span>
+            上一个
+          </button>
+          <button id="flip-button" class="control-button primary" type="button">翻面</button>
+          <button id="next-button" class="control-button" type="button">
+            下一个
+            <span aria-hidden="true">→</span>
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="add-document-dialog" class="modal">
+      <form id="add-document-form" class="modal-panel" method="dialog">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">New Document</p>
+            <h2>添加飞书文档</h2>
+          </div>
+          <button id="close-dialog-button" class="icon-button" type="button" aria-label="关闭" title="关闭">
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+        <label class="field">
+          <span>飞书文档链接</span>
+          <input id="document-url-input" type="url" placeholder="https://bytedance.larkoffice.com/wiki/..." required />
+        </label>
+        <p id="document-form-error" class="form-error" role="alert"></p>
+        <div class="modal-actions">
+          <button class="control-button" type="button" id="cancel-dialog-button">取消</button>
+          <button class="control-button primary" type="submit">添加</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="./app.js" defer></script>
+  </body>
+</html>

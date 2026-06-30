@@ -1,0 +1,13 @@
+{
+  "name": "english-feishu-flashcards",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Feishu document based English learning flashcards.",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check app.js && node --check server.js && node --check api/refresh-document.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
