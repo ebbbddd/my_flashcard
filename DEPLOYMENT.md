@@ -30,13 +30,19 @@
 api/refresh-document.js
 ```
 
+静态页面位于：
+
+```text
+public/
+```
+
 在 Vercel 中：
 
 1. New Project
 2. Import 这个 GitHub 仓库
 3. Framework Preset 选 `Other`
 4. Build Command 留空或使用默认
-5. Output Directory 留空
+5. Output Directory 填 `public`，或保持 Vercel 自动识别静态资源目录
 6. 添加环境变量
 
 环境变量：

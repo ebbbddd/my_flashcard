@@ -6,6 +6,7 @@ const { URL } = require("url");
 
 const PORT = Number(process.env.PORT || 4174);
 const ROOT = __dirname;
+const STATIC_ROOT = path.join(ROOT, "public");
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -72,9 +73,9 @@ async function handleRefreshDocument(request, response) {
 
 function serveStatic(urlPathname, response) {
   const pathname = decodeURIComponent(urlPathname === "/" ? "/index.html" : urlPathname);
-  const filePath = path.resolve(ROOT, `.${pathname}`);
+  const filePath = path.resolve(STATIC_ROOT, `.${pathname}`);
 
-  if (!filePath.startsWith(ROOT)) {
+  if (!filePath.startsWith(STATIC_ROOT)) {
     response.writeHead(403);
     response.end("Forbidden");
     return;
