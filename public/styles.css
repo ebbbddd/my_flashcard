@@ -342,7 +342,7 @@ h2 {
   top: calc(50% - 198px);
   right: 0;
   left: 0;
-  z-index: 40;
+  z-index: 70;
   display: flex;
   justify-content: center;
 }
