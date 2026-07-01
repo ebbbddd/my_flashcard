@@ -92,6 +92,7 @@ const seedDocuments = [
 const STORAGE_KEY = "feishu-flashcard-documents";
 const DELETED_DOCUMENTS_KEY = "feishu-flashcard-deleted-document-ids";
 const LONG_PRESS_DELAY = 650;
+const SYNC_WRITE_DELAY = 250;
 
 const state = {
   documentId: null,
@@ -113,6 +114,11 @@ const deleteState = {
   documentId: null,
   longPressTimer: null,
   longPressTriggered: false
+};
+
+const syncState = {
+  writeTimer: null,
+  isApplyingRemoteState: false
 };
 
 let documents = loadDocuments();
@@ -145,32 +151,37 @@ const cardFrontText = document.querySelector("#card-front-text");
 const cardBackText = document.querySelector("#card-back-text");
 
 function loadDocuments() {
+  return buildDocumentsFromCache(readCachedDocuments(), loadDeletedDocumentIds());
+}
+
+function readCachedDocuments() {
   try {
-    const deletedIds = loadDeletedDocumentIds();
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]");
-    if (!Array.isArray(parsed)) return seedDocuments.filter((doc) => !deletedIds.has(doc.id));
-
-    const stored = parsed.filter(isCachedDocument);
-
-    const seedDocumentsWithCache = seedDocuments
-      .filter((seedDocument) => !deletedIds.has(seedDocument.id))
-      .map((seedDocument) => {
-        const cachedDocument = stored.find((doc) => doc.id === seedDocument.id);
-        return cachedDocument ? { ...seedDocument, ...cachedDocument, isCustom: false } : seedDocument;
-      });
-    const customDocuments = stored.filter((doc) => {
-      return doc.isCustom && !deletedIds.has(doc.id) && !seedDocuments.some((seedDocument) => seedDocument.id === doc.id);
-    });
-
-    return [...seedDocumentsWithCache, ...customDocuments];
+    return Array.isArray(parsed) ? parsed.filter(isCachedDocument) : [];
   } catch {
-    const deletedIds = loadDeletedDocumentIds();
-    return seedDocuments.filter((doc) => !deletedIds.has(doc.id));
+    return [];
   }
 }
 
-function saveDocuments() {
+function buildDocumentsFromCache(cachedDocuments, deletedIds) {
+  const stored = Array.isArray(cachedDocuments) ? cachedDocuments.filter(isCachedDocument) : [];
+
+  const seedDocumentsWithCache = seedDocuments
+    .filter((seedDocument) => !deletedIds.has(seedDocument.id))
+    .map((seedDocument) => {
+      const cachedDocument = stored.find((doc) => doc.id === seedDocument.id);
+      return cachedDocument ? { ...seedDocument, ...cachedDocument, isCustom: false } : seedDocument;
+    });
+  const customDocuments = stored.filter((doc) => {
+    return doc.isCustom && !deletedIds.has(doc.id) && !seedDocuments.some((seedDocument) => seedDocument.id === doc.id);
+  });
+
+  return [...seedDocumentsWithCache, ...customDocuments];
+}
+
+function saveDocuments(options = {}) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(documents.filter(isCachedDocument)));
+  if (options.sync !== false) queueSharedDocumentsSave();
 }
 
 function loadDeletedDocumentIds() {
@@ -182,8 +193,140 @@ function loadDeletedDocumentIds() {
   }
 }
 
-function saveDeletedDocumentIds(deletedIds) {
+function saveDeletedDocumentIds(deletedIds, options = {}) {
   localStorage.setItem(DELETED_DOCUMENTS_KEY, JSON.stringify([...deletedIds]));
+  if (options.sync !== false) queueSharedDocumentsSave();
+}
+
+async function syncDocumentsFromServer() {
+  if (!canUseSharedApi()) return;
+
+  try {
+    const remoteState = await requestSharedDocuments("GET");
+    const localCachedDocuments = readCachedDocuments();
+    const localDeletedIds = loadDeletedDocumentIds();
+    const remoteDeletedIds = new Set(remoteState.deletedDocumentIds);
+    const mergedDeletedIds = new Set([...remoteDeletedIds, ...localDeletedIds]);
+    const remoteIsEmpty = remoteState.documents.length === 0 && remoteDeletedIds.size === 0;
+    const mergedCachedDocuments = remoteIsEmpty
+      ? mergeCachedDocuments([], localCachedDocuments, mergedDeletedIds)
+      : mergeCachedDocuments(localCachedDocuments, remoteState.documents, mergedDeletedIds);
+    const shouldPushMergedState =
+      (remoteIsEmpty && (localCachedDocuments.length > 0 || mergedDeletedIds.size > 0)) ||
+      !areSharedStatesEquivalent(remoteState, {
+        documents: mergedCachedDocuments,
+        deletedDocumentIds: [...mergedDeletedIds]
+      });
+
+    syncState.isApplyingRemoteState = true;
+    documents = buildDocumentsFromCache(mergedCachedDocuments, mergedDeletedIds);
+    saveDeletedDocumentIds(mergedDeletedIds, { sync: false });
+    saveDocuments({ sync: false });
+    syncState.isApplyingRemoteState = false;
+
+    if (state.documentId && !documents.some((doc) => doc.id === state.documentId)) {
+      goHome();
+    } else if (studyView.classList.contains("is-active")) {
+      renderStudy();
+    }
+
+    renderHome();
+
+    if (shouldPushMergedState) {
+      await saveDocumentsToServer();
+    }
+  } catch (error) {
+    syncState.isApplyingRemoteState = false;
+    console.warn("Shared document sync failed:", error);
+  }
+}
+
+function queueSharedDocumentsSave() {
+  if (!canUseSharedApi() || syncState.isApplyingRemoteState) return;
+
+  window.clearTimeout(syncState.writeTimer);
+  syncState.writeTimer = window.setTimeout(() => {
+    syncState.writeTimer = null;
+    saveDocumentsToServer().catch((error) => {
+      console.warn("Shared document save failed:", error);
+    });
+  }, SYNC_WRITE_DELAY);
+}
+
+async function saveDocumentsToServer() {
+  if (!canUseSharedApi()) return;
+
+  await requestSharedDocuments("PUT", {
+    documents: documents.filter(isCachedDocument),
+    deletedDocumentIds: [...loadDeletedDocumentIds()]
+  });
+}
+
+async function requestSharedDocuments(method, body) {
+  const response = await fetch(`${getApiBase()}/api/documents`, {
+    method,
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || "共享数据同步失败");
+  }
+
+  return normalizeSharedDocumentState(payload.state);
+}
+
+function normalizeSharedDocumentState(value = {}) {
+  return {
+    documents: Array.isArray(value.documents) ? value.documents.filter(isCachedDocument) : [],
+    deletedDocumentIds: Array.isArray(value.deletedDocumentIds)
+      ? value.deletedDocumentIds.filter((id) => typeof id === "string" && id)
+      : []
+  };
+}
+
+function mergeCachedDocuments(fallbackDocuments, preferredDocuments, deletedIds) {
+  const merged = new Map();
+
+  for (const doc of fallbackDocuments) {
+    if (!deletedIds.has(doc.id)) merged.set(doc.id, doc);
+  }
+
+  for (const doc of preferredDocuments) {
+    if (!deletedIds.has(doc.id)) merged.set(doc.id, doc);
+  }
+
+  return [...merged.values()];
+}
+
+function areSharedStatesEquivalent(left, right) {
+  return getSharedStateSignature(left) === getSharedStateSignature(right);
+}
+
+function getSharedStateSignature(stateToSign) {
+  const deletedDocumentIds = [...new Set(stateToSign.deletedDocumentIds || [])].sort();
+  const documentsToSign = (stateToSign.documents || [])
+    .filter(isCachedDocument)
+    .map((doc) => ({
+      id: doc.id,
+      title: doc.title,
+      section: doc.section,
+      sourceUrl: doc.sourceUrl,
+      isCustom: Boolean(doc.isCustom),
+      documentId: doc.documentId || "",
+      revisionId: doc.revisionId || "",
+      cards: doc.cards
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+
+  return JSON.stringify({ documents: documentsToSign, deletedDocumentIds });
+}
+
+function canUseSharedApi() {
+  return window.location.protocol === "http:" || window.location.protocol === "https:" || window.location.protocol === "file:";
 }
 
 function isCachedDocument(doc) {
@@ -328,7 +471,7 @@ function handleDeleteDocument(event) {
 
   const deletedIds = loadDeletedDocumentIds();
   deletedIds.add(documentId);
-  saveDeletedDocumentIds(deletedIds);
+  saveDeletedDocumentIds(deletedIds, { sync: false });
 
   homeRefreshState.documentIds.delete(documentId);
   documents = documents.filter((doc) => doc.id !== documentId);
@@ -431,8 +574,7 @@ function renderStudy() {
 }
 
 async function requestDocumentRefresh(sourceUrl) {
-  const apiBase = window.location.protocol === "file:" ? "http://localhost:4174" : "";
-  const response = await fetch(`${apiBase}/api/refresh-document`, {
+  const response = await fetch(`${getApiBase()}/api/refresh-document`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -721,12 +863,15 @@ function getPreferredVoice(lang) {
 }
 
 function getTtsUrl(speech) {
-  const apiBase = window.location.protocol === "file:" ? "http://localhost:4174" : "";
   const params = new URLSearchParams({
     text: speech.text,
     lang: speech.lang
   });
-  return `${apiBase}/api/tts?${params.toString()}`;
+  return `${getApiBase()}/api/tts?${params.toString()}`;
+}
+
+function getApiBase() {
+  return window.location.protocol === "file:" ? "http://localhost:4174" : "";
 }
 
 function shouldUseRemoteTts() {
@@ -794,3 +939,8 @@ document.addEventListener("click", (event) => {
 });
 
 renderHome();
+syncDocumentsFromServer();
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") syncDocumentsFromServer();
+});
