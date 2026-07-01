@@ -5,7 +5,7 @@
   "description": "Feishu document based English learning flashcards.",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check public/app.js && node --check server.js && node --check api/refresh-document.js"
+    "check": "node --check public/app.js && node --check server.js && node --check api/refresh-document.js && node --check api/tts.js && node --check lib/tts.js"
   },
   "engines": {
     "node": ">=18"

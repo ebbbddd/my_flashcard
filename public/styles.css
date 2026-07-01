@@ -337,7 +337,7 @@ h2 {
 
 .card-jump {
   position: absolute;
-  top: calc(50% - 311.5px);
+  top: calc(50% - 198px);
   right: 0;
   left: 0;
   z-index: 40;
@@ -449,7 +449,7 @@ h2 {
   left: 50%;
   display: block;
   width: 334px;
-  height: 557px;
+  height: 330px;
   margin: 0;
   padding: 0;
   border: 0;

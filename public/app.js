@@ -99,6 +99,7 @@ const state = {
 
 const speechState = {
   activeUtterance: null,
+  activeAudio: null,
   isSpeaking: false
 };
 
@@ -460,11 +461,11 @@ function closeCardJumpMenu() {
 }
 
 function renderSpeechButton() {
-  if (!isSpeechSupported()) {
+  if (!isTtsPlaybackSupported()) {
     speakButton.disabled = true;
     speakButton.textContent = "";
-    speakButton.setAttribute("aria-label", "当前浏览器不支持朗读");
-    speakButton.title = "当前浏览器不支持朗读";
+    speakButton.setAttribute("aria-label", "当前环境不支持朗读");
+    speakButton.title = "当前环境不支持朗读";
     speakButton.setAttribute("aria-pressed", "false");
     speakButton.classList.remove("is-speaking");
     return;
@@ -480,8 +481,8 @@ function renderSpeechButton() {
 }
 
 function toggleSpeech() {
-  if (!isSpeechSupported()) {
-    alert("当前浏览器不支持朗读功能，请换用 Chrome、Safari 或 Edge 再试。");
+  if (!isTtsPlaybackSupported()) {
+    alert("当前环境不支持朗读功能，请换用 Chrome、Safari 或 Edge 再试。");
     return;
   }
 
@@ -495,18 +496,60 @@ function toggleSpeech() {
 
   stopSpeech({ render: false });
 
+  speechState.isSpeaking = true;
+  renderSpeechButton();
+
+  if (shouldUseRemoteTts()) {
+    playRemoteTts(speech);
+    return;
+  }
+
+  speakWithNativeTts(speech);
+}
+
+function speakWithNativeTts(speech) {
+  if (!isSpeechSupported()) {
+    playRemoteTts(speech);
+    return;
+  }
+
   const utterance = new SpeechSynthesisUtterance(speech.text);
   utterance.lang = speech.lang;
   utterance.rate = speech.lang.startsWith("en") ? 0.88 : 0.96;
   utterance.pitch = 1;
   utterance.voice = getPreferredVoice(speech.lang);
   utterance.onend = () => completeSpeech(utterance);
-  utterance.onerror = () => completeSpeech(utterance);
+  utterance.onerror = () => {
+    if (speechState.activeUtterance !== utterance) return;
+    speechState.activeUtterance = null;
+    playRemoteTts(speech);
+  };
 
   speechState.activeUtterance = utterance;
-  speechState.isSpeaking = true;
-  renderSpeechButton();
-  window.speechSynthesis.speak(utterance);
+  try {
+    window.speechSynthesis.speak(utterance);
+  } catch {
+    speechState.activeUtterance = null;
+    playRemoteTts(speech);
+  }
+}
+
+function playRemoteTts(speech) {
+  if (typeof Audio === "undefined") {
+    failSpeechPlayback("当前环境无法播放音频。");
+    return;
+  }
+
+  const audio = new Audio(getTtsUrl(speech));
+  audio.preload = "auto";
+  audio.onended = () => completeAudio(audio);
+  audio.onerror = () => failSpeechPlayback("朗读音频加载失败，请稍后重试。", audio);
+  speechState.activeAudio = audio;
+
+  const playPromise = audio.play();
+  if (playPromise && typeof playPromise.catch === "function") {
+    playPromise.catch(() => failSpeechPlayback("朗读播放失败，请确认飞书允许当前页面播放声音。", audio));
+  }
 }
 
 function stopSpeech(options = {}) {
@@ -514,7 +557,14 @@ function stopSpeech(options = {}) {
     window.speechSynthesis.cancel();
   }
 
+  if (speechState.activeAudio) {
+    speechState.activeAudio.pause();
+    speechState.activeAudio.removeAttribute("src");
+    speechState.activeAudio.load();
+  }
+
   speechState.activeUtterance = null;
+  speechState.activeAudio = null;
   speechState.isSpeaking = false;
 
   if (options.render !== false && studyView.classList.contains("is-active")) {
@@ -528,6 +578,24 @@ function completeSpeech(utterance) {
   speechState.activeUtterance = null;
   speechState.isSpeaking = false;
   renderSpeechButton();
+}
+
+function completeAudio(audio) {
+  if (speechState.activeAudio !== audio) return;
+
+  speechState.activeAudio = null;
+  speechState.isSpeaking = false;
+  renderSpeechButton();
+}
+
+function failSpeechPlayback(message, audio = speechState.activeAudio) {
+  if (audio && speechState.activeAudio !== audio) return;
+
+  speechState.activeUtterance = null;
+  speechState.activeAudio = null;
+  speechState.isSpeaking = false;
+  renderSpeechButton();
+  alert(message);
 }
 
 function getActiveSpeechContent() {
@@ -544,6 +612,27 @@ function getPreferredVoice(lang) {
 
   const languagePrefix = lang.split("-")[0].toLowerCase();
   return voices.find((voice) => voice.lang.toLowerCase().startsWith(languagePrefix)) || null;
+}
+
+function getTtsUrl(speech) {
+  const apiBase = window.location.protocol === "file:" ? "http://localhost:4174" : "";
+  const params = new URLSearchParams({
+    text: speech.text,
+    lang: speech.lang
+  });
+  return `${apiBase}/api/tts?${params.toString()}`;
+}
+
+function shouldUseRemoteTts() {
+  return isFeishuClient() || !isSpeechSupported();
+}
+
+function isFeishuClient() {
+  return /Feishu|Lark|LarkLocale|FeishuLocale/i.test(navigator.userAgent);
+}
+
+function isTtsPlaybackSupported() {
+  return isSpeechSupported() || typeof Audio !== "undefined";
 }
 
 function isSpeechSupported() {

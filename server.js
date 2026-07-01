@@ -3,6 +3,7 @@ const fs = require("fs");
 const http = require("http");
 const path = require("path");
 const { URL } = require("url");
+const { fetchTextToSpeechAudio, getTtsStatusCode } = require("./lib/tts");
 
 const PORT = Number(process.env.PORT || 4174);
 const ROOT = __dirname;
@@ -32,6 +33,11 @@ const server = http.createServer(async (request, response) => {
 
   if (request.method === "POST" && requestUrl.pathname === "/api/refresh-document") {
     await handleRefreshDocument(request, response);
+    return;
+  }
+
+  if (request.method === "GET" && requestUrl.pathname === "/api/tts") {
+    await handleTextToSpeech(requestUrl, response);
     return;
   }
 
@@ -68,6 +74,25 @@ async function handleRefreshDocument(request, response) {
     sendJson(response, 200, { ok: true, document });
   } catch (error) {
     sendJson(response, 500, { ok: false, error: getSafeErrorMessage(error) });
+  }
+}
+
+async function handleTextToSpeech(requestUrl, response) {
+  try {
+    const result = await fetchTextToSpeechAudio({
+      text: requestUrl.searchParams.get("text"),
+      lang: requestUrl.searchParams.get("lang")
+    });
+
+    response.writeHead(200, {
+      "Content-Type": result.contentType,
+      "Content-Length": result.buffer.length,
+      "Cache-Control": "public, max-age=86400, s-maxage=604800",
+      "X-TTS-Provider": result.provider
+    });
+    response.end(result.buffer);
+  } catch (error) {
+    sendJson(response, getTtsStatusCode(error), { ok: false, error: getSafeErrorMessage(error) });
   }
 }
 
