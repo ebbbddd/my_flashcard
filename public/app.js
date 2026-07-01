@@ -97,6 +97,15 @@ const state = {
   isFlipped: false
 };
 
+const speechState = {
+  activeUtterance: null,
+  isSpeaking: false
+};
+
+const homeRefreshState = {
+  documentIds: new Set()
+};
+
 let documents = loadDocuments();
 
 const homeView = document.querySelector("#home-view");
@@ -110,9 +119,9 @@ const cancelDialogButton = document.querySelector("#cancel-dialog-button");
 const documentUrlInput = document.querySelector("#document-url-input");
 const documentFormError = document.querySelector("#document-form-error");
 const backButton = document.querySelector("#back-button");
-const refreshButton = document.querySelector("#refresh-button");
 const cardButton = document.querySelector("#card-button");
 const flipButton = document.querySelector("#flip-button");
+const speakButton = document.querySelector("#speak-button");
 const prevButton = document.querySelector("#prev-button");
 const nextButton = document.querySelector("#next-button");
 const studyTitle = document.querySelector("#study-title");
@@ -169,6 +178,11 @@ function getActiveCard() {
 function renderHome() {
   documentList.replaceChildren(
     ...documents.map((doc) => {
+      const item = document.createElement("div");
+      item.className = "document-row";
+      item.dataset.documentId = doc.id;
+      item.classList.toggle("is-refreshing", homeRefreshState.documentIds.has(doc.id));
+
       const button = document.createElement("button");
       button.className = "document-card";
       button.type = "button";
@@ -195,7 +209,17 @@ function renderHome() {
       meta.append(section, count);
       button.append(title, meta, source);
       button.addEventListener("click", () => openDocument(doc.id));
-      return button;
+
+      const refresh = document.createElement("button");
+      refresh.className = "document-refresh-button";
+      refresh.type = "button";
+      refresh.title = "刷新飞书文档";
+      refresh.setAttribute("aria-label", `刷新 ${doc.title}`);
+      refresh.disabled = homeRefreshState.documentIds.has(doc.id);
+      refresh.addEventListener("click", () => refreshHomeDocument(doc.id));
+
+      item.append(button, refresh);
+      return item;
     })
   );
 }
@@ -284,45 +308,19 @@ function renderStudy() {
   const document = getActiveDocument();
   const card = getActiveCard();
   const cardCount = document.cards.length;
+  const displayIndex = String(state.cardIndex + 1).padStart(2, "0");
 
   studyTitle.textContent = document.title;
   studySection.textContent = document.section;
-  progressButton.textContent = `${state.cardIndex + 1} / ${cardCount}`;
+  progressButton.textContent = `${displayIndex} / ${cardCount}`;
   cardFrontText.textContent = card.zh;
   cardBackText.textContent = card.en;
   cardButton.classList.toggle("is-flipped", state.isFlipped);
   flipButton.textContent = state.isFlipped ? "看中文" : "看英文";
   prevButton.disabled = state.cardIndex === 0;
   nextButton.disabled = state.cardIndex === cardCount - 1;
+  renderSpeechButton();
   renderCardJumpMenu();
-}
-
-async function refreshActiveDocument() {
-  const activeDocument = getActiveDocument();
-  closeCardJumpMenu();
-  setRefreshLoading(true);
-
-  try {
-    const refreshedDocument = await requestDocumentRefresh(activeDocument.sourceUrl);
-    const nextDocument = {
-      ...activeDocument,
-      title: refreshedDocument.title,
-      section: refreshedDocument.section,
-      sourceUrl: activeDocument.sourceUrl,
-      cards: refreshedDocument.cards
-    };
-
-    documents = documents.map((doc) => (doc.id === activeDocument.id ? nextDocument : doc));
-    saveDocuments();
-    state.cardIndex = 0;
-    state.isFlipped = false;
-    renderHome();
-    renderStudy();
-  } catch (error) {
-    alert(error.message);
-  } finally {
-    setRefreshLoading(false);
-  }
 }
 
 async function requestDocumentRefresh(sourceUrl) {
@@ -344,18 +342,56 @@ async function requestDocumentRefresh(sourceUrl) {
   return payload.document;
 }
 
-function setRefreshLoading(isLoading) {
-  refreshButton.disabled = isLoading;
-  refreshButton.textContent = isLoading ? "刷新中" : "刷新";
+async function refreshHomeDocument(documentId) {
+  const documentToRefresh = documents.find((doc) => doc.id === documentId);
+  if (!documentToRefresh || homeRefreshState.documentIds.has(documentId)) return;
+
+  homeRefreshState.documentIds.add(documentId);
+  renderHome();
+
+  try {
+    const nextDocument = await refreshDocument(documentToRefresh);
+    documents = documents.map((doc) => (doc.id === documentId ? nextDocument : doc));
+    saveDocuments();
+
+    if (state.documentId === documentId) {
+      state.cardIndex = 0;
+      state.isFlipped = false;
+      renderStudy();
+    }
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    homeRefreshState.documentIds.delete(documentId);
+    renderHome();
+  }
+}
+
+async function refreshDocument(documentToRefresh) {
+  const refreshedDocument = await requestDocumentRefresh(documentToRefresh.sourceUrl);
+
+  return {
+    ...documentToRefresh,
+    title: refreshedDocument.title,
+    section: refreshedDocument.section,
+    sourceUrl: documentToRefresh.sourceUrl,
+    documentId: refreshedDocument.documentId,
+    revisionId: refreshedDocument.revisionId,
+    cards: refreshedDocument.cards
+  };
 }
 
 function setView(viewName) {
   homeView.classList.toggle("is-active", viewName === "home");
   studyView.classList.toggle("is-active", viewName === "study");
-  if (viewName !== "study") closeCardJumpMenu();
+  if (viewName !== "study") {
+    stopSpeech({ render: false });
+    closeCardJumpMenu();
+  }
 }
 
 function openDocument(documentId) {
+  stopSpeech({ render: false });
   state.documentId = documentId;
   state.cardIndex = 0;
   state.isFlipped = false;
@@ -364,6 +400,7 @@ function openDocument(documentId) {
 }
 
 function goHome() {
+  stopSpeech({ render: false });
   state.documentId = null;
   state.cardIndex = 0;
   state.isFlipped = false;
@@ -371,12 +408,14 @@ function goHome() {
 }
 
 function flipCard() {
+  stopSpeech({ render: false });
   state.isFlipped = !state.isFlipped;
   renderStudy();
 }
 
 function goToCard(nextIndex) {
   const document = getActiveDocument();
+  stopSpeech({ render: false });
   state.cardIndex = Math.max(0, Math.min(nextIndex, document.cards.length - 1));
   state.isFlipped = false;
   closeCardJumpMenu();
@@ -396,7 +435,7 @@ function renderCardJumpMenu() {
 
       const number = document.createElement("span");
       number.className = "jump-number";
-      number.textContent = String(index + 1);
+      number.textContent = `${index + 1}.`;
 
       const text = document.createElement("span");
       text.className = "jump-text";
@@ -420,8 +459,98 @@ function closeCardJumpMenu() {
   progressButton.setAttribute("aria-expanded", "false");
 }
 
+function renderSpeechButton() {
+  if (!isSpeechSupported()) {
+    speakButton.disabled = true;
+    speakButton.textContent = "";
+    speakButton.setAttribute("aria-label", "当前浏览器不支持朗读");
+    speakButton.title = "当前浏览器不支持朗读";
+    speakButton.setAttribute("aria-pressed", "false");
+    speakButton.classList.remove("is-speaking");
+    return;
+  }
+
+  const languageLabel = state.isFlipped ? "英文" : "中文";
+  speakButton.disabled = false;
+  speakButton.textContent = "";
+  speakButton.setAttribute("aria-label", speechState.isSpeaking ? "停止当前朗读" : `朗读当前${languageLabel}内容`);
+  speakButton.title = speechState.isSpeaking ? "停止当前朗读" : `朗读当前${languageLabel}内容`;
+  speakButton.setAttribute("aria-pressed", String(speechState.isSpeaking));
+  speakButton.classList.toggle("is-speaking", speechState.isSpeaking);
+}
+
+function toggleSpeech() {
+  if (!isSpeechSupported()) {
+    alert("当前浏览器不支持朗读功能，请换用 Chrome、Safari 或 Edge 再试。");
+    return;
+  }
+
+  if (speechState.isSpeaking) {
+    stopSpeech();
+    return;
+  }
+
+  const speech = getActiveSpeechContent();
+  if (!speech.text) return;
+
+  stopSpeech({ render: false });
+
+  const utterance = new SpeechSynthesisUtterance(speech.text);
+  utterance.lang = speech.lang;
+  utterance.rate = speech.lang.startsWith("en") ? 0.88 : 0.96;
+  utterance.pitch = 1;
+  utterance.voice = getPreferredVoice(speech.lang);
+  utterance.onend = () => completeSpeech(utterance);
+  utterance.onerror = () => completeSpeech(utterance);
+
+  speechState.activeUtterance = utterance;
+  speechState.isSpeaking = true;
+  renderSpeechButton();
+  window.speechSynthesis.speak(utterance);
+}
+
+function stopSpeech(options = {}) {
+  if (isSpeechSupported()) {
+    window.speechSynthesis.cancel();
+  }
+
+  speechState.activeUtterance = null;
+  speechState.isSpeaking = false;
+
+  if (options.render !== false && studyView.classList.contains("is-active")) {
+    renderSpeechButton();
+  }
+}
+
+function completeSpeech(utterance) {
+  if (speechState.activeUtterance !== utterance) return;
+
+  speechState.activeUtterance = null;
+  speechState.isSpeaking = false;
+  renderSpeechButton();
+}
+
+function getActiveSpeechContent() {
+  const card = getActiveCard();
+  return state.isFlipped
+    ? { text: card.en, lang: "en-US" }
+    : { text: card.zh, lang: "zh-CN" };
+}
+
+function getPreferredVoice(lang) {
+  const voices = window.speechSynthesis.getVoices();
+  const exactVoice = voices.find((voice) => voice.lang.toLowerCase() === lang.toLowerCase());
+  if (exactVoice) return exactVoice;
+
+  const languagePrefix = lang.split("-")[0].toLowerCase();
+  return voices.find((voice) => voice.lang.toLowerCase().startsWith(languagePrefix)) || null;
+}
+
+function isSpeechSupported() {
+  return "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+}
+
 backButton.addEventListener("click", goHome);
-refreshButton.addEventListener("click", refreshActiveDocument);
 addDocumentButton.addEventListener("click", openAddDocumentDialog);
 addDocumentForm.addEventListener("submit", handleAddDocument);
 closeDialogButton.addEventListener("click", closeAddDocumentDialog);
@@ -429,8 +558,17 @@ cancelDialogButton.addEventListener("click", closeAddDocumentDialog);
 progressButton.addEventListener("click", toggleCardJumpMenu);
 cardButton.addEventListener("click", flipCard);
 flipButton.addEventListener("click", flipCard);
+speakButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleSpeech();
+});
 prevButton.addEventListener("click", () => goToCard(state.cardIndex - 1));
 nextButton.addEventListener("click", () => goToCard(state.cardIndex + 1));
+
+if (isSpeechSupported()) {
+  window.speechSynthesis.addEventListener("voiceschanged", renderSpeechButton);
+  window.addEventListener("beforeunload", () => stopSpeech({ render: false }));
+}
 
 document.addEventListener("keydown", (event) => {
   if (!studyView.classList.contains("is-active")) return;

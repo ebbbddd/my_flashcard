@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>英语学习卡片</title>
+    <meta name="theme-color" content="#f6f6f4" />
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="./styles.css" />
   </head>
@@ -15,7 +16,7 @@
             <p class="eyebrow">Feishu Reader</p>
             <h1 id="home-title">英语学习卡片</h1>
           </div>
-          <button id="add-document-button" class="control-button primary" type="button">添加飞书文档</button>
+          <button id="add-document-button" class="control-button primary" type="button">Upload Feishu files</button>
         </div>
         <div id="document-list" class="document-list"></div>
       </section>
@@ -29,22 +30,20 @@
             <p id="study-section" class="eyebrow"></p>
             <h1 id="study-title"></h1>
           </div>
-          <div class="study-actions">
-            <button id="refresh-button" class="refresh-button" type="button" title="刷新飞书文档">刷新</button>
-            <div class="card-jump">
-              <button
-                id="progress-button"
-                class="progress-pill"
-                type="button"
-                aria-haspopup="listbox"
-                aria-expanded="false"
-              ></button>
-              <div id="card-jump-menu" class="card-jump-menu" role="listbox" aria-label="选择卡片序号"></div>
-            </div>
-          </div>
         </div>
 
-        <button id="card-button" class="flashcard" type="button" aria-live="polite">
+        <div class="card-jump">
+          <button
+            id="progress-button"
+            class="progress-pill"
+            type="button"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+          ></button>
+          <div id="card-jump-menu" class="card-jump-menu" role="listbox" aria-label="选择卡片序号"></div>
+        </div>
+
+        <div id="card-button" class="flashcard" role="button" tabindex="0" aria-live="polite">
           <span class="card-face card-front">
             <span class="card-label">中文</span>
             <span id="card-front-text" class="card-text"></span>
@@ -53,19 +52,15 @@
             <span class="card-label">English</span>
             <span id="card-back-text" class="card-text"></span>
           </span>
-        </button>
+          <button id="speak-button" class="speak-button" type="button" title="朗读当前卡片">朗读</button>
+        </div>
 
         <div class="study-controls">
-          <button id="prev-button" class="control-button" type="button">
-            <span aria-hidden="true">←</span>
-            上一个
-          </button>
-          <button id="flip-button" class="control-button primary" type="button">翻面</button>
-          <button id="next-button" class="control-button" type="button">
-            下一个
-            <span aria-hidden="true">→</span>
-          </button>
+          <button id="prev-button" class="control-button" type="button">Previous</button>
+          <span class="control-divider" aria-hidden="true"></span>
+          <button id="next-button" class="control-button" type="button">Next</button>
         </div>
+        <button id="flip-button" class="visually-hidden" type="button">翻面</button>
       </section>
     </main>
 
@@ -74,7 +69,7 @@
         <div class="modal-header">
           <div>
             <p class="eyebrow">New Document</p>
-            <h2>添加飞书文档</h2>
+            <h2>Upload</h2>
           </div>
           <button id="close-dialog-button" class="icon-button" type="button" aria-label="关闭" title="关闭">
             <span aria-hidden="true">×</span>
@@ -82,12 +77,19 @@
         </div>
         <label class="field">
           <span>飞书文档链接</span>
-          <input id="document-url-input" type="url" placeholder="https://bytedance.larkoffice.com/wiki/..." required />
+          <textarea
+            id="document-url-input"
+            autocomplete="off"
+            inputmode="url"
+            placeholder="https://bytedance.larkoffice.com/&#10;wiki/..."
+            required
+            rows="4"
+          ></textarea>
         </label>
         <p id="document-form-error" class="form-error" role="alert"></p>
         <div class="modal-actions">
-          <button class="control-button" type="button" id="cancel-dialog-button">取消</button>
-          <button class="control-button primary" type="submit">添加</button>
+          <button class="control-button" type="button" id="cancel-dialog-button">Cancel</button>
+          <button class="control-button primary" type="submit">Upload</button>
         </div>
       </form>
     </dialog>
