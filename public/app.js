@@ -90,6 +90,8 @@ const seedDocuments = [
 ];
 
 const STORAGE_KEY = "feishu-flashcard-documents";
+const DELETED_DOCUMENTS_KEY = "feishu-flashcard-deleted-document-ids";
+const LONG_PRESS_DELAY = 650;
 
 const state = {
   documentId: null,
@@ -107,6 +109,12 @@ const homeRefreshState = {
   documentIds: new Set()
 };
 
+const deleteState = {
+  documentId: null,
+  longPressTimer: null,
+  longPressTriggered: false
+};
+
 let documents = loadDocuments();
 
 const homeView = document.querySelector("#home-view");
@@ -117,6 +125,10 @@ const addDocumentDialog = document.querySelector("#add-document-dialog");
 const addDocumentForm = document.querySelector("#add-document-form");
 const closeDialogButton = document.querySelector("#close-dialog-button");
 const cancelDialogButton = document.querySelector("#cancel-dialog-button");
+const deleteDocumentDialog = document.querySelector("#delete-document-dialog");
+const deleteDocumentForm = document.querySelector("#delete-document-form");
+const deleteDocumentMessage = document.querySelector("#delete-document-message");
+const cancelDeleteDocumentButton = document.querySelector("#cancel-delete-document-button");
 const documentUrlInput = document.querySelector("#document-url-input");
 const documentFormError = document.querySelector("#document-form-error");
 const backButton = document.querySelector("#back-button");
@@ -134,27 +146,44 @@ const cardBackText = document.querySelector("#card-back-text");
 
 function loadDocuments() {
   try {
+    const deletedIds = loadDeletedDocumentIds();
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]");
-    if (!Array.isArray(parsed)) return [...seedDocuments];
+    if (!Array.isArray(parsed)) return seedDocuments.filter((doc) => !deletedIds.has(doc.id));
 
     const stored = parsed.filter(isCachedDocument);
 
-    const seedDocumentsWithCache = seedDocuments.map((seedDocument) => {
-      const cachedDocument = stored.find((doc) => doc.id === seedDocument.id);
-      return cachedDocument ? { ...seedDocument, ...cachedDocument, isCustom: false } : seedDocument;
-    });
+    const seedDocumentsWithCache = seedDocuments
+      .filter((seedDocument) => !deletedIds.has(seedDocument.id))
+      .map((seedDocument) => {
+        const cachedDocument = stored.find((doc) => doc.id === seedDocument.id);
+        return cachedDocument ? { ...seedDocument, ...cachedDocument, isCustom: false } : seedDocument;
+      });
     const customDocuments = stored.filter((doc) => {
-      return doc.isCustom && !seedDocuments.some((seedDocument) => seedDocument.id === doc.id);
+      return doc.isCustom && !deletedIds.has(doc.id) && !seedDocuments.some((seedDocument) => seedDocument.id === doc.id);
     });
 
     return [...seedDocumentsWithCache, ...customDocuments];
   } catch {
-    return [...seedDocuments];
+    const deletedIds = loadDeletedDocumentIds();
+    return seedDocuments.filter((doc) => !deletedIds.has(doc.id));
   }
 }
 
 function saveDocuments() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(documents.filter(isCachedDocument)));
+}
+
+function loadDeletedDocumentIds() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DELETED_DOCUMENTS_KEY) ?? "[]");
+    return new Set(Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveDeletedDocumentIds(deletedIds) {
+  localStorage.setItem(DELETED_DOCUMENTS_KEY, JSON.stringify([...deletedIds]));
 }
 
 function isCachedDocument(doc) {
@@ -209,7 +238,16 @@ function renderHome() {
 
       meta.append(section, count);
       button.append(title, meta, source);
-      button.addEventListener("click", () => openDocument(doc.id));
+      button.addEventListener("click", (event) => handleDocumentClick(event, doc.id));
+      button.addEventListener("pointerdown", (event) => startDocumentLongPress(event, doc.id));
+      button.addEventListener("pointerup", clearDocumentLongPress);
+      button.addEventListener("pointerleave", clearDocumentLongPress);
+      button.addEventListener("pointercancel", clearDocumentLongPress);
+      button.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        clearDocumentLongPress();
+        openDeleteDocumentDialog(doc.id);
+      });
 
       const refresh = document.createElement("button");
       refresh.className = "document-refresh-button";
@@ -225,6 +263,35 @@ function renderHome() {
   );
 }
 
+function handleDocumentClick(event, documentId) {
+  if (deleteState.longPressTriggered) {
+    event.preventDefault();
+    deleteState.longPressTriggered = false;
+    return;
+  }
+
+  openDocument(documentId);
+}
+
+function startDocumentLongPress(event, documentId) {
+  if (event.button !== 0 && event.pointerType === "mouse") return;
+
+  clearDocumentLongPress();
+  deleteState.longPressTriggered = false;
+  deleteState.longPressTimer = window.setTimeout(() => {
+    deleteState.longPressTimer = null;
+    deleteState.longPressTriggered = true;
+    openDeleteDocumentDialog(documentId);
+  }, LONG_PRESS_DELAY);
+}
+
+function clearDocumentLongPress() {
+  if (!deleteState.longPressTimer) return;
+
+  window.clearTimeout(deleteState.longPressTimer);
+  deleteState.longPressTimer = null;
+}
+
 function openAddDocumentDialog() {
   documentFormError.textContent = "";
   addDocumentForm.reset();
@@ -234,6 +301,45 @@ function openAddDocumentDialog() {
 
 function closeAddDocumentDialog() {
   addDocumentDialog.close();
+}
+
+function openDeleteDocumentDialog(documentId) {
+  const documentToDelete = documents.find((doc) => doc.id === documentId);
+  if (!documentToDelete) return;
+
+  deleteState.documentId = documentId;
+  deleteDocumentMessage.textContent = `确认删除“${documentToDelete.title}”？`;
+  if (!deleteDocumentDialog.open) {
+    deleteDocumentDialog.showModal();
+  }
+  requestAnimationFrame(() => cancelDeleteDocumentButton.focus());
+}
+
+function closeDeleteDocumentDialog() {
+  deleteState.documentId = null;
+  deleteDocumentDialog.close();
+}
+
+function handleDeleteDocument(event) {
+  event.preventDefault();
+
+  const documentId = deleteState.documentId;
+  if (!documentId) return;
+
+  const deletedIds = loadDeletedDocumentIds();
+  deletedIds.add(documentId);
+  saveDeletedDocumentIds(deletedIds);
+
+  homeRefreshState.documentIds.delete(documentId);
+  documents = documents.filter((doc) => doc.id !== documentId);
+
+  if (state.documentId === documentId) {
+    goHome();
+  }
+
+  saveDocuments();
+  renderHome();
+  closeDeleteDocumentDialog();
 }
 
 function handleAddDocument(event) {
@@ -644,6 +750,11 @@ addDocumentButton.addEventListener("click", openAddDocumentDialog);
 addDocumentForm.addEventListener("submit", handleAddDocument);
 closeDialogButton.addEventListener("click", closeAddDocumentDialog);
 cancelDialogButton.addEventListener("click", closeAddDocumentDialog);
+deleteDocumentForm.addEventListener("submit", handleDeleteDocument);
+cancelDeleteDocumentButton.addEventListener("click", closeDeleteDocumentDialog);
+deleteDocumentDialog.addEventListener("close", () => {
+  deleteState.documentId = null;
+});
 progressButton.addEventListener("click", toggleCardJumpMenu);
 cardButton.addEventListener("click", flipCard);
 flipButton.addEventListener("click", flipCard);

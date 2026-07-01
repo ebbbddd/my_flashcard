@@ -94,6 +94,22 @@
       </form>
     </dialog>
 
+    <dialog id="delete-document-dialog" class="modal delete-modal">
+      <form id="delete-document-form" class="modal-panel" method="dialog">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">Delete Document</p>
+            <h2>删除文档</h2>
+          </div>
+        </div>
+        <p id="delete-document-message" class="delete-message"></p>
+        <div class="modal-actions">
+          <button class="control-button" type="button" id="cancel-delete-document-button">取消</button>
+          <button class="control-button primary danger" type="submit">删除</button>
+        </div>
+      </form>
+    </dialog>
+
     <script src="./app.js" defer></script>
   </body>
 </html>

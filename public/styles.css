@@ -167,6 +167,8 @@ textarea:focus-visible {
   color: var(--ink);
   text-align: left;
   cursor: pointer;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .document-card::before {
@@ -756,6 +758,28 @@ h2 {
   border-color: rgba(22, 24, 35, 0.12);
   background: var(--white);
   color: #000000;
+}
+
+.delete-modal .modal-panel {
+  height: 204px;
+}
+
+.delete-message {
+  display: flex;
+  height: 75px;
+  align-items: center;
+  justify-content: center;
+  margin: 0 20px;
+  color: #000000;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.modal-actions .control-button.danger,
+.modal-actions .control-button.danger:active {
+  color: #d21f3c;
 }
 
 @media (min-width: 760px) {
