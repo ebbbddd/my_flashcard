@@ -91,6 +91,8 @@ const seedDocuments = [
 
 const STORAGE_KEY = "feishu-flashcard-documents";
 const DELETED_DOCUMENTS_KEY = "feishu-flashcard-deleted-document-ids";
+const FAVORITES_STORAGE_KEY = "feishu-flashcard-favorites";
+const FAVORITES_DOCUMENT_ID = "__favorites__";
 const LONG_PRESS_DELAY = 650;
 const SYNC_WRITE_DELAY = 250;
 
@@ -122,6 +124,7 @@ const syncState = {
 };
 
 let documents = loadDocuments();
+let favorites = loadFavorites();
 
 const homeView = document.querySelector("#home-view");
 const studyView = document.querySelector("#study-view");
@@ -141,6 +144,7 @@ const backButton = document.querySelector("#back-button");
 const cardButton = document.querySelector("#card-button");
 const flipButton = document.querySelector("#flip-button");
 const speakButton = document.querySelector("#speak-button");
+const favoriteButton = document.querySelector("#favorite-button");
 const prevButton = document.querySelector("#prev-button");
 const nextButton = document.querySelector("#next-button");
 const studyTitle = document.querySelector("#study-title");
@@ -196,6 +200,27 @@ function loadDeletedDocumentIds() {
 function saveDeletedDocumentIds(deletedIds, options = {}) {
   localStorage.setItem(DELETED_DOCUMENTS_KEY, JSON.stringify([...deletedIds]));
   if (options.sync !== false) queueSharedDocumentsSave();
+}
+
+function loadFavorites() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(FAVORITES_STORAGE_KEY) ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+
+    const deduped = new Map();
+    for (const item of parsed) {
+      const favorite = normalizeFavorite(item);
+      if (favorite) deduped.set(favorite.key, favorite);
+    }
+
+    return [...deduped.values()];
+  } catch {
+    return [];
+  }
+}
+
+function saveFavorites() {
+  localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(favorites));
 }
 
 async function syncDocumentsFromServer() {
@@ -340,6 +365,7 @@ function isCachedDocument(doc) {
 }
 
 function getActiveDocument() {
+  if (state.documentId === FAVORITES_DOCUMENT_ID) return getFavoritesDocument();
   return documents.find((document) => document.id === state.documentId) ?? documents[0];
 }
 
@@ -350,6 +376,7 @@ function getActiveCard() {
 
 function renderHome() {
   documentList.replaceChildren(
+    createFavoritesRow(),
     ...documents.map((doc) => {
       const item = document.createElement("div");
       item.className = "document-row";
@@ -406,6 +433,28 @@ function renderHome() {
   );
 }
 
+function createFavoritesRow() {
+  const item = document.createElement("div");
+  item.className = "document-row favorite-row";
+
+  const button = document.createElement("button");
+  button.className = "document-card";
+  button.type = "button";
+
+  const title = document.createElement("span");
+  title.className = "document-title";
+  title.textContent = "我的收藏";
+
+  const count = document.createElement("span");
+  count.className = "favorite-count";
+  count.textContent = `${favorites.length}`;
+
+  button.append(title, count);
+  button.addEventListener("click", openFavorites);
+  item.append(button);
+  return item;
+}
+
 function handleDocumentClick(event, documentId) {
   if (deleteState.longPressTriggered) {
     event.preventDefault();
@@ -414,6 +463,20 @@ function handleDocumentClick(event, documentId) {
   }
 
   openDocument(documentId);
+}
+
+function openFavorites() {
+  if (favorites.length === 0) {
+    alert("还没有收藏卡片。");
+    return;
+  }
+
+  stopSpeech({ render: false });
+  state.documentId = FAVORITES_DOCUMENT_ID;
+  state.cardIndex = 0;
+  state.isFlipped = false;
+  setView("study");
+  renderStudy();
 }
 
 function startDocumentLongPress(event, documentId) {
@@ -561,7 +624,7 @@ function renderStudy() {
   const displayIndex = String(state.cardIndex + 1).padStart(2, "0");
 
   studyTitle.textContent = document.title;
-  studySection.textContent = document.section;
+  studySection.textContent = document.isFavorites ? card.sourceTitle || "收藏" : document.section;
   progressButton.textContent = `${displayIndex} / ${cardCount}`;
   cardFrontText.textContent = card.zh;
   cardBackText.textContent = card.en;
@@ -570,6 +633,7 @@ function renderStudy() {
   prevButton.disabled = state.cardIndex === 0;
   nextButton.disabled = state.cardIndex === cardCount - 1;
   renderSpeechButton();
+  renderFavoriteButton();
   renderCardJumpMenu();
 }
 
@@ -706,6 +770,141 @@ function toggleCardJumpMenu() {
 function closeCardJumpMenu() {
   cardJumpMenu.classList.remove("is-open");
   progressButton.setAttribute("aria-expanded", "false");
+}
+
+function renderFavoriteButton() {
+  const document = getActiveDocument();
+  const card = getActiveCard();
+  const isFavorited = isCardFavorited(document, card);
+
+  favoriteButton.classList.toggle("is-favorited", isFavorited);
+  favoriteButton.textContent = "";
+  favoriteButton.setAttribute("aria-label", isFavorited ? "取消收藏当前卡片" : "收藏当前卡片");
+  favoriteButton.title = isFavorited ? "取消收藏当前卡片" : "收藏当前卡片";
+  favoriteButton.setAttribute("aria-pressed", String(isFavorited));
+}
+
+function toggleFavorite() {
+  const document = getActiveDocument();
+  const card = getActiveCard();
+  const favoriteKey = getCardFavoriteKey(document, card);
+  const favoriteIndex = favorites.findIndex((item) => item.key === favoriteKey);
+  const wasInFavoritesView = document.id === FAVORITES_DOCUMENT_ID;
+
+  if (favoriteIndex >= 0) {
+    favorites = favorites.filter((item) => item.key !== favoriteKey);
+  } else {
+    favorites = [createFavoriteFromCard(document, card), ...favorites];
+  }
+
+  saveFavorites();
+  renderHome();
+
+  if (wasInFavoritesView && favoriteIndex >= 0) {
+    stopSpeech({ render: false });
+
+    if (favorites.length === 0) {
+      goHome();
+      return;
+    }
+
+    state.cardIndex = Math.min(state.cardIndex, favorites.length - 1);
+    state.isFlipped = false;
+  }
+
+  renderStudy();
+}
+
+function isCardFavorited(documentToCheck, card) {
+  if (!card) return false;
+  const favoriteKey = getCardFavoriteKey(documentToCheck, card);
+  return favorites.some((item) => item.key === favoriteKey);
+}
+
+function createFavoriteFromCard(sourceDocument, card) {
+  const key = getCardFavoriteKey(sourceDocument, card);
+  return {
+    id: `favorite-${hashString(key)}`,
+    key,
+    sourceDocumentId: sourceDocument.isFavorites ? card.sourceDocumentId || "" : sourceDocument.id,
+    sourceTitle: sourceDocument.isFavorites ? card.sourceTitle || "我的收藏" : sourceDocument.title,
+    sourceSection: sourceDocument.isFavorites ? card.sourceSection || "" : sourceDocument.section,
+    sourceUrl: sourceDocument.isFavorites ? card.sourceUrl || "" : sourceDocument.sourceUrl,
+    sourceCardId: card.sourceCardId || card.id || "",
+    zh: card.zh,
+    en: card.en,
+    savedAt: new Date().toISOString()
+  };
+}
+
+function getFavoritesDocument() {
+  return {
+    id: FAVORITES_DOCUMENT_ID,
+    title: "我的收藏",
+    section: "Favorites",
+    sourceUrl: "local://favorites",
+    isFavorites: true,
+    cards: favorites.map((favorite) => ({
+      id: favorite.id,
+      favoriteKey: favorite.key,
+      sourceDocumentId: favorite.sourceDocumentId,
+      sourceTitle: favorite.sourceTitle,
+      sourceSection: favorite.sourceSection,
+      sourceUrl: favorite.sourceUrl,
+      sourceCardId: favorite.sourceCardId,
+      zh: favorite.zh,
+      en: favorite.en
+    }))
+  };
+}
+
+function getCardFavoriteKey(sourceDocument, card) {
+  if (card.favoriteKey) return card.favoriteKey;
+
+  return [
+    sourceDocument.sourceUrl || sourceDocument.id || "",
+    normalizeFavoriteText(card.zh),
+    normalizeFavoriteText(card.en)
+  ].join("||");
+}
+
+function normalizeFavorite(value) {
+  if (
+    !value ||
+    typeof value.key !== "string" ||
+    typeof value.zh !== "string" ||
+    typeof value.en !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    id: typeof value.id === "string" && value.id ? value.id : `favorite-${hashString(value.key)}`,
+    key: value.key,
+    sourceDocumentId: typeof value.sourceDocumentId === "string" ? value.sourceDocumentId : "",
+    sourceTitle: typeof value.sourceTitle === "string" ? value.sourceTitle : "飞书文档",
+    sourceSection: typeof value.sourceSection === "string" ? value.sourceSection : "",
+    sourceUrl: typeof value.sourceUrl === "string" ? value.sourceUrl : "",
+    sourceCardId: typeof value.sourceCardId === "string" ? value.sourceCardId : "",
+    zh: value.zh,
+    en: value.en,
+    savedAt: typeof value.savedAt === "string" ? value.savedAt : ""
+  };
+}
+
+function normalizeFavoriteText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function hashString(value) {
+  let hash = 2166136261;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return (hash >>> 0).toString(36);
 }
 
 function renderSpeechButton() {
@@ -906,6 +1105,10 @@ flipButton.addEventListener("click", flipCard);
 speakButton.addEventListener("click", (event) => {
   event.stopPropagation();
   toggleSpeech();
+});
+favoriteButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleFavorite();
 });
 prevButton.addEventListener("click", () => goToCard(state.cardIndex - 1));
 nextButton.addEventListener("click", () => goToCard(state.cardIndex + 1));
