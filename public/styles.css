@@ -614,28 +614,17 @@ h2 {
   bottom: 37px;
   left: calc(50% + 30px);
   z-index: 10;
-  display: grid;
   width: 40px;
   height: 40px;
   padding: 0;
-  place-items: center;
   border: 0;
-  border-radius: 4px;
-  background: var(--blue);
-  color: var(--white);
+  background: url("./assets/study-favorite.svg") center / 40px 40px no-repeat;
   font-size: 0;
   transform: translateX(-50%);
 }
 
-.favorite-button::before {
-  color: currentColor;
-  content: "★";
-  font-size: 21px;
-  line-height: 1;
-}
-
 .favorite-button.is-favorited {
-  color: #ffe500;
+  background-image: url("./assets/study-favorite-active.svg");
 }
 
 .speak-button.is-speaking {
