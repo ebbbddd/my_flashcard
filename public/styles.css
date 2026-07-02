@@ -186,28 +186,7 @@ textarea:focus-visible {
 }
 
 .favorite-row .document-card::before {
-  display: grid;
-  place-items: center;
-  border-radius: 6px;
-  background: var(--blue);
-  color: var(--white);
-  content: "★";
-  font-size: 15px;
-  line-height: 1;
-}
-
-.favorite-count {
-  display: grid;
-  min-width: 24px;
-  height: 24px;
-  margin-left: auto;
-  place-items: center;
-  border-radius: 999px;
-  background: rgba(28, 0, 201, 0.1);
-  color: var(--blue);
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1;
+  background-image: url("./assets/favorite-file-icon.svg");
 }
 
 .document-card:active {

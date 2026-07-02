@@ -445,11 +445,7 @@ function createFavoritesRow() {
   title.className = "document-title";
   title.textContent = "我的收藏";
 
-  const count = document.createElement("span");
-  count.className = "favorite-count";
-  count.textContent = `${favorites.length}`;
-
-  button.append(title, count);
+  button.append(title);
   button.addEventListener("click", openFavorites);
   item.append(button);
   return item;
