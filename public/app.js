@@ -733,28 +733,50 @@ function goToCard(nextIndex) {
 
 function renderCardJumpMenu() {
   const activeDocument = getActiveDocument();
-  cardJumpMenu.replaceChildren(
-    ...activeDocument.cards.map((card, index) => {
-      const option = document.createElement("button");
-      option.className = "jump-option";
-      option.classList.toggle("is-active", index === state.cardIndex);
-      option.type = "button";
-      option.role = "option";
-      option.setAttribute("aria-selected", String(index === state.cardIndex));
+  const items = [];
+  let previousHeadingLabel = "";
 
-      const number = document.createElement("span");
-      number.className = "jump-number";
-      number.textContent = `${index + 1}.`;
+  activeDocument.cards.forEach((card, index) => {
+    const headingLabel = getCardHeadingLabel(card);
+    if (headingLabel && headingLabel !== previousHeadingLabel) {
+      const heading = document.createElement("div");
+      heading.className = "jump-heading";
+      heading.role = "presentation";
+      heading.textContent = headingLabel;
+      items.push(heading);
+    }
 
-      const text = document.createElement("span");
-      text.className = "jump-text";
-      text.textContent = card.zh;
+    previousHeadingLabel = headingLabel;
+    items.push(createJumpOption(card, index));
+  });
 
-      option.append(number, text);
-      option.addEventListener("click", () => goToCard(index));
-      return option;
-    })
-  );
+  cardJumpMenu.replaceChildren(...items);
+}
+
+function createJumpOption(card, index) {
+  const option = document.createElement("button");
+  option.className = "jump-option";
+  option.classList.toggle("is-active", index === state.cardIndex);
+  option.type = "button";
+  option.role = "option";
+  option.setAttribute("aria-selected", String(index === state.cardIndex));
+
+  const number = document.createElement("span");
+  number.className = "jump-number";
+  number.textContent = `${index + 1}.`;
+
+  const text = document.createElement("span");
+  text.className = "jump-text";
+  text.textContent = card.zh;
+
+  option.append(number, text);
+  option.addEventListener("click", () => goToCard(index));
+  return option;
+}
+
+function getCardHeadingLabel(card) {
+  if (!Array.isArray(card.headingPath)) return "";
+  return normalizeHeadingPath(card.headingPath).join(" - ");
 }
 
 function toggleCardJumpMenu() {
@@ -829,6 +851,7 @@ function createFavoriteFromCard(sourceDocument, card) {
     sourceCardId: card.sourceCardId || card.id || "",
     zh: card.zh,
     en: card.en,
+    headingPath: normalizeHeadingPath(card.headingPath),
     savedAt: new Date().toISOString()
   };
 }
@@ -849,7 +872,8 @@ function getFavoritesDocument() {
       sourceUrl: favorite.sourceUrl,
       sourceCardId: favorite.sourceCardId,
       zh: favorite.zh,
-      en: favorite.en
+      en: favorite.en,
+      headingPath: favorite.headingPath
     }))
   };
 }
@@ -884,8 +908,14 @@ function normalizeFavorite(value) {
     sourceCardId: typeof value.sourceCardId === "string" ? value.sourceCardId : "",
     zh: value.zh,
     en: value.en,
+    headingPath: normalizeHeadingPath(value.headingPath),
     savedAt: typeof value.savedAt === "string" ? value.savedAt : ""
   };
+}
+
+function normalizeHeadingPath(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim());
 }
 
 function normalizeFavoriteText(value) {
