@@ -92,6 +92,7 @@ const seedDocuments = [
 const STORAGE_KEY = "feishu-flashcard-documents";
 const DELETED_DOCUMENTS_KEY = "feishu-flashcard-deleted-document-ids";
 const FAVORITES_STORAGE_KEY = "feishu-flashcard-favorites";
+const DELETED_FAVORITES_KEY = "feishu-flashcard-deleted-favorite-keys";
 const FAVORITES_DOCUMENT_ID = "__favorites__";
 const LONG_PRESS_DELAY = 650;
 const SYNC_WRITE_DELAY = 250;
@@ -120,7 +121,8 @@ const deleteState = {
 
 const syncState = {
   writeTimer: null,
-  isApplyingRemoteState: false
+  isApplyingRemoteState: false,
+  isManualSyncing: false
 };
 
 let documents = loadDocuments();
@@ -130,6 +132,7 @@ const homeView = document.querySelector("#home-view");
 const studyView = document.querySelector("#study-view");
 const documentList = document.querySelector("#document-list");
 const addDocumentButton = document.querySelector("#add-document-button");
+const syncButton = document.querySelector("#sync-button");
 const addDocumentDialog = document.querySelector("#add-document-dialog");
 const addDocumentForm = document.querySelector("#add-document-form");
 const closeDialogButton = document.querySelector("#close-dialog-button");
@@ -221,35 +224,66 @@ function loadFavorites() {
 
 function saveFavorites() {
   localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(favorites));
+  queueSharedDocumentsSave();
 }
 
-async function syncDocumentsFromServer() {
-  if (!canUseSharedApi()) return;
+function loadDeletedFavoriteKeys() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DELETED_FAVORITES_KEY) ?? "[]");
+    return new Set(Array.isArray(parsed) ? parsed.filter((key) => typeof key === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveDeletedFavoriteKeys(deletedKeys, options = {}) {
+  localStorage.setItem(DELETED_FAVORITES_KEY, JSON.stringify([...deletedKeys]));
+  if (options.sync !== false) queueSharedDocumentsSave();
+}
+
+async function syncDocumentsFromServer(options = {}) {
+  if (!canUseSharedApi()) return false;
 
   try {
     const remoteState = await requestSharedDocuments("GET");
     const localCachedDocuments = readCachedDocuments();
     const localDeletedIds = loadDeletedDocumentIds();
+    const localFavorites = loadFavorites();
+    const localDeletedFavoriteKeys = loadDeletedFavoriteKeys();
     const remoteDeletedIds = new Set(remoteState.deletedDocumentIds);
+    const remoteDeletedFavoriteKeys = new Set(remoteState.deletedFavoriteKeys);
     const mergedDeletedIds = new Set([...remoteDeletedIds, ...localDeletedIds]);
-    const remoteIsEmpty = remoteState.documents.length === 0 && remoteDeletedIds.size === 0;
-    const mergedCachedDocuments = remoteIsEmpty
-      ? mergeCachedDocuments([], localCachedDocuments, mergedDeletedIds)
-      : mergeCachedDocuments(localCachedDocuments, remoteState.documents, mergedDeletedIds);
+    const mergedDeletedFavoriteKeys = new Set([...remoteDeletedFavoriteKeys, ...localDeletedFavoriteKeys]);
+    const remoteIsEmpty =
+      remoteState.documents.length === 0 &&
+      remoteDeletedIds.size === 0 &&
+      remoteState.favorites.length === 0 &&
+      remoteDeletedFavoriteKeys.size === 0;
+    const mergedCachedDocuments = mergeCachedDocuments(localCachedDocuments, remoteState.documents, mergedDeletedIds);
+    const mergedFavorites = mergeFavorites(localFavorites, remoteState.favorites, mergedDeletedFavoriteKeys);
     const shouldPushMergedState =
+      options.pushMerged === true ||
       (remoteIsEmpty && (localCachedDocuments.length > 0 || mergedDeletedIds.size > 0)) ||
+      (remoteIsEmpty && (localFavorites.length > 0 || mergedDeletedFavoriteKeys.size > 0)) ||
       !areSharedStatesEquivalent(remoteState, {
         documents: mergedCachedDocuments,
-        deletedDocumentIds: [...mergedDeletedIds]
+        deletedDocumentIds: [...mergedDeletedIds],
+        favorites: mergedFavorites,
+        deletedFavoriteKeys: [...mergedDeletedFavoriteKeys]
       });
 
     syncState.isApplyingRemoteState = true;
     documents = buildDocumentsFromCache(mergedCachedDocuments, mergedDeletedIds);
+    favorites = mergedFavorites;
     saveDeletedDocumentIds(mergedDeletedIds, { sync: false });
+    saveDeletedFavoriteKeys(mergedDeletedFavoriteKeys, { sync: false });
     saveDocuments({ sync: false });
+    localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(favorites));
     syncState.isApplyingRemoteState = false;
 
-    if (state.documentId && !documents.some((doc) => doc.id === state.documentId)) {
+    if (state.documentId === FAVORITES_DOCUMENT_ID && favorites.length === 0) {
+      goHome();
+    } else if (state.documentId && state.documentId !== FAVORITES_DOCUMENT_ID && !documents.some((doc) => doc.id === state.documentId)) {
       goHome();
     } else if (studyView.classList.contains("is-active")) {
       renderStudy();
@@ -260,9 +294,11 @@ async function syncDocumentsFromServer() {
     if (shouldPushMergedState) {
       await saveDocumentsToServer();
     }
+    return true;
   } catch (error) {
     syncState.isApplyingRemoteState = false;
     console.warn("Shared document sync failed:", error);
+    return false;
   }
 }
 
@@ -283,7 +319,9 @@ async function saveDocumentsToServer() {
 
   await requestSharedDocuments("PUT", {
     documents: documents.filter(isCachedDocument),
-    deletedDocumentIds: [...loadDeletedDocumentIds()]
+    deletedDocumentIds: [...loadDeletedDocumentIds()],
+    favorites,
+    deletedFavoriteKeys: [...loadDeletedFavoriteKeys()]
   });
 }
 
@@ -309,6 +347,10 @@ function normalizeSharedDocumentState(value = {}) {
     documents: Array.isArray(value.documents) ? value.documents.filter(isCachedDocument) : [],
     deletedDocumentIds: Array.isArray(value.deletedDocumentIds)
       ? value.deletedDocumentIds.filter((id) => typeof id === "string" && id)
+      : [],
+    favorites: Array.isArray(value.favorites) ? value.favorites.map(normalizeFavorite).filter(Boolean) : [],
+    deletedFavoriteKeys: Array.isArray(value.deletedFavoriteKeys)
+      ? value.deletedFavoriteKeys.filter((key) => typeof key === "string" && key)
       : []
   };
 }
@@ -317,14 +359,55 @@ function mergeCachedDocuments(fallbackDocuments, preferredDocuments, deletedIds)
   const merged = new Map();
 
   for (const doc of fallbackDocuments) {
-    if (!deletedIds.has(doc.id)) merged.set(doc.id, doc);
+    if (!deletedIds.has(doc.id)) merged.set(doc.id, normalizeDocumentForSync(doc));
   }
 
   for (const doc of preferredDocuments) {
-    if (!deletedIds.has(doc.id)) merged.set(doc.id, doc);
+    if (deletedIds.has(doc.id)) continue;
+
+    const nextDocument = normalizeDocumentForSync(doc);
+    const existingDocument = merged.get(doc.id);
+    merged.set(doc.id, chooseNewerSyncItem(existingDocument, nextDocument, "updatedAt"));
   }
 
   return [...merged.values()];
+}
+
+function mergeFavorites(fallbackFavorites, preferredFavorites, deletedFavoriteKeys) {
+  const merged = new Map();
+
+  for (const favorite of fallbackFavorites) {
+    if (!deletedFavoriteKeys.has(favorite.key)) merged.set(favorite.key, favorite);
+  }
+
+  for (const favorite of preferredFavorites) {
+    if (deletedFavoriteKeys.has(favorite.key)) continue;
+
+    const existingFavorite = merged.get(favorite.key);
+    merged.set(favorite.key, chooseNewerSyncItem(existingFavorite, favorite, "savedAt"));
+  }
+
+  return [...merged.values()].sort((a, b) => getTimeValue(b.savedAt) - getTimeValue(a.savedAt));
+}
+
+function chooseNewerSyncItem(existingItem, nextItem, timestampKey) {
+  if (!existingItem) return nextItem;
+
+  const existingTime = getTimeValue(existingItem[timestampKey]);
+  const nextTime = getTimeValue(nextItem[timestampKey]);
+  return nextTime >= existingTime ? nextItem : existingItem;
+}
+
+function getTimeValue(value) {
+  const time = Date.parse(value || "");
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function normalizeDocumentForSync(doc) {
+  return {
+    ...doc,
+    updatedAt: typeof doc.updatedAt === "string" ? doc.updatedAt : ""
+  };
 }
 
 function areSharedStatesEquivalent(left, right) {
@@ -343,11 +426,29 @@ function getSharedStateSignature(stateToSign) {
       isCustom: Boolean(doc.isCustom),
       documentId: doc.documentId || "",
       revisionId: doc.revisionId || "",
+      updatedAt: doc.updatedAt || "",
       cards: doc.cards
     }))
     .sort((a, b) => a.id.localeCompare(b.id));
+  const favoritesToSign = (stateToSign.favorites || [])
+    .map(normalizeFavorite)
+    .filter(Boolean)
+    .map((favorite) => ({
+      key: favorite.key,
+      sourceDocumentId: favorite.sourceDocumentId,
+      sourceTitle: favorite.sourceTitle,
+      sourceSection: favorite.sourceSection,
+      sourceUrl: favorite.sourceUrl,
+      sourceCardId: favorite.sourceCardId,
+      zh: favorite.zh,
+      en: favorite.en,
+      headingPath: favorite.headingPath,
+      savedAt: favorite.savedAt
+    }))
+    .sort((a, b) => a.key.localeCompare(b.key));
+  const deletedFavoriteKeys = [...new Set(stateToSign.deletedFavoriteKeys || [])].sort();
 
-  return JSON.stringify({ documents: documentsToSign, deletedDocumentIds });
+  return JSON.stringify({ documents: documentsToSign, deletedDocumentIds, favorites: favoritesToSign, deletedFavoriteKeys });
 }
 
 function canUseSharedApi() {
@@ -603,6 +704,7 @@ function createCustomDocument(sourceUrl) {
     section: "待解析",
     sourceUrl,
     isCustom: true,
+    updatedAt: getNowIso(),
     cards: [
       {
         id: `${id}-pending`,
@@ -686,6 +788,7 @@ async function refreshDocument(documentToRefresh) {
     sourceUrl: documentToRefresh.sourceUrl,
     documentId: refreshedDocument.documentId,
     revisionId: refreshedDocument.revisionId,
+    updatedAt: getNowIso(),
     cards: refreshedDocument.cards
   };
 }
@@ -810,8 +913,14 @@ function toggleFavorite() {
   const wasInFavoritesView = document.id === FAVORITES_DOCUMENT_ID;
 
   if (favoriteIndex >= 0) {
+    const deletedFavoriteKeys = loadDeletedFavoriteKeys();
+    deletedFavoriteKeys.add(favoriteKey);
+    saveDeletedFavoriteKeys(deletedFavoriteKeys, { sync: false });
     favorites = favorites.filter((item) => item.key !== favoriteKey);
   } else {
+    const deletedFavoriteKeys = loadDeletedFavoriteKeys();
+    deletedFavoriteKeys.delete(favoriteKey);
+    saveDeletedFavoriteKeys(deletedFavoriteKeys, { sync: false });
     favorites = [createFavoriteFromCard(document, card), ...favorites];
   }
 
@@ -922,6 +1031,30 @@ function normalizeFavoriteText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
+async function handleManualSync() {
+  if (syncState.isManualSyncing) return;
+
+  window.clearTimeout(syncState.writeTimer);
+  syncState.writeTimer = null;
+  syncState.isManualSyncing = true;
+  renderSyncButton();
+
+  const ok = await syncDocumentsFromServer({ pushMerged: true });
+
+  syncState.isManualSyncing = false;
+  renderSyncButton();
+
+  if (!ok) {
+    alert("同步失败，请确认网络和服务状态后再试。");
+  }
+}
+
+function renderSyncButton() {
+  syncButton.disabled = syncState.isManualSyncing;
+  syncButton.classList.toggle("is-syncing", syncState.isManualSyncing);
+  syncButton.setAttribute("aria-busy", String(syncState.isManualSyncing));
+}
+
 function hashString(value) {
   let hash = 2166136261;
 
@@ -931,6 +1064,10 @@ function hashString(value) {
   }
 
   return (hash >>> 0).toString(36);
+}
+
+function getNowIso() {
+  return new Date().toISOString();
 }
 
 function renderSpeechButton() {
@@ -1117,6 +1254,7 @@ function isSpeechSupported() {
 
 backButton.addEventListener("click", goHome);
 addDocumentButton.addEventListener("click", openAddDocumentDialog);
+syncButton.addEventListener("click", handleManualSync);
 addDocumentForm.addEventListener("submit", handleAddDocument);
 closeDialogButton.addEventListener("click", closeAddDocumentDialog);
 cancelDialogButton.addEventListener("click", closeAddDocumentDialog);
@@ -1168,6 +1306,7 @@ document.addEventListener("click", (event) => {
 });
 
 renderHome();
+renderSyncButton();
 syncDocumentsFromServer();
 
 document.addEventListener("visibilitychange", () => {

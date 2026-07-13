@@ -55,7 +55,7 @@ KV_REST_API_URL=你的 Vercel KV 或 Upstash Redis REST URL
 KV_REST_API_TOKEN=你的 Vercel KV 或 Upstash Redis REST Token
 ```
 
-`KV_REST_API_URL` 和 `KV_REST_API_TOKEN` 用于同步手机端和电脑端的文档列表、删除状态、刷新后的卡片缓存。没有配置 KV 时，本地开发会写入 `data/documents.json`；Vercel Serverless 只能使用临时文件兜底，冷启动后可能丢失状态，因此线上建议务必配置 KV。
+`KV_REST_API_URL` 和 `KV_REST_API_TOKEN` 用于同步手机端和电脑端的文档列表、删除状态、刷新后的卡片缓存和收藏卡片。没有配置 KV 时，本地开发会写入 `data/documents.json`；Vercel Serverless 只能使用临时文件兜底，冷启动后可能丢失状态，因此线上建议务必配置 KV。
 
 本地开发时仍可运行：
 
@@ -84,4 +84,4 @@ https://your-domain.example.com
 - 标题仍为“7月学习”
 - 卡片数量为 16
 - 第一张中文为“我第一次听到这件事的时候，也一头雾水！”
-- 在电脑端添加、刷新或删除文档后，手机端重新打开或切回页面能看到相同列表
+- 在电脑端添加、刷新、收藏或删除文档后，手机端重新打开、切回页面或点击首页同步按钮能看到相同内容

@@ -139,6 +139,42 @@ textarea:focus-visible {
   background: var(--blue-pressed);
 }
 
+.sync-button {
+  position: fixed;
+  top: 18px;
+  left: calc(50% + 129px);
+  z-index: 20;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(227, 227, 225, 0.86);
+  color: var(--blue);
+  font-size: 0;
+  cursor: pointer;
+  transform: translateX(-50%);
+}
+
+.sync-button::before {
+  display: block;
+  width: 18px;
+  height: 18px;
+  margin: 11px;
+  background: url("./assets/home-refresh.svg") center / 18px 18px no-repeat;
+  content: "";
+  filter: invert(11%) sepia(98%) saturate(5750%) hue-rotate(255deg) brightness(74%) contrast(122%);
+}
+
+.sync-button.is-syncing::before {
+  animation: spin 850ms linear infinite;
+}
+
+.sync-button:disabled {
+  cursor: progress;
+  opacity: 0.72;
+}
+
 .document-list {
   display: flex;
   width: min(100% - 40px, 350px);
